@@ -1,0 +1,6 @@
+id              = test
+programs        = etc/test.programs
+binpath         = /bin:/home/dexter/bin
+<unix_server>
+    socket          = /tmp/safetynet.sock
+</unix_server>
