@@ -31,6 +31,7 @@ sub initialize {
     $_[KERNEL]->state( 'start_program'                  => $self );
     $_[KERNEL]->state( 'stop_program'                   => $self );
     $_[KERNEL]->state( 'stop_program_timeout'           => $self );
+    $_[KERNEL]->state( 'commit_programs'                => $self );
     $_[KERNEL]->state( 'nop'                            => $self );
 
     $_[KERNEL]->state( 'sig_ignore'                     => $self );
@@ -193,7 +194,7 @@ sub do_postback {
     my $res = { result => $result };
     if (defined $error) { 
         my $cerr = $error;
-        if ($error =~ m/^(.*)\s+at\s.*line\s\d+$/) {
+        if ($error =~ m/^(.*)\s+at\s.*line\s\d+[\s\n]*$/m) {
             ($cerr) = $1;
         }
         $res->{error} = { message => $cerr };
@@ -255,6 +256,18 @@ sub info_program {
     };
     if (not defined $o) {
         $e = "object does not exist";
+    }
+    $_[KERNEL]->yield( 'do_postback', @_[ARG0, ARG1], $o, $e );
+}
+
+sub commit_programs {
+    my $o = undef;
+    my $e = undef;
+    eval {
+        $o = $_[OBJECT]->{programs}->commit;
+    };
+    if ($@) {
+        $e = $@;
     }
     $_[KERNEL]->yield( 'do_postback', @_[ARG0, ARG1], $o, $e );
 }

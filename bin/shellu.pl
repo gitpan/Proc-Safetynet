@@ -43,15 +43,27 @@ my %print_result_of = (
         }
         return @o;
     },
+    'info_status' => sub {
+        my $inp = shift;
+        my $res = $inp->{result};
+        my @o = ();
+        if (exists $inp->{error}) {
+            push @o, sprintf("ERROR: (status): %s", $inp->{error}->{message} );
+        }
+        if (exists $res->{is_running}) {
+            push @o, sprintf( "%s", $res->{is_running} ? "running" : "not running" );
+        }
+        return @o;
+    },
     'start_program' => sub {
         my $inp = shift;
         my $res = $inp->{result};
         my @o = ();
         if (exists $inp->{error}) {
-            push @o, sprintf("ERROR: %s", $inp->{error}->{message} );
+            push @o, sprintf("ERROR: (start): %s", $inp->{error}->{message} );
         }
         if ($res) {
-            push @o, "OK.";
+            push @o, "start OK.";
         }
         return @o;
     },
@@ -60,10 +72,78 @@ my %print_result_of = (
         my $res = $inp->{result};
         my @o = ();
         if (exists $inp->{error}) {
-            push @o, sprintf("ERROR: %s", $inp->{error}->{message} );
+            push @o, sprintf("ERROR: (stop): %s", $inp->{error}->{message} );
         }
         if ($res) {
-            push @o, "OK.";
+            push @o, "stop OK.";
+        }
+        return @o;
+    },
+    'commit_programs' => sub {
+        my $inp = shift;
+        my $res = $inp->{result};
+        my @o = ();
+        if (exists $inp->{error}) {
+            push @o, sprintf("ERROR: (commit): %s", $inp->{error}->{message} );
+        }
+        if ($res) {
+            push @o, "commit OK.";
+        }
+        return @o;
+    },
+    'add_program' => sub {
+        my $inp = shift;
+        my $res = $inp->{result};
+        my @o = ();
+        if (exists $inp->{error}) {
+            push @o, sprintf("ERROR: (add): %s", $inp->{error}->{message} );
+        }
+        if ($res) {
+            push @o, "add OK.";
+        }
+        return @o;
+    },
+    'remove_program' => sub {
+        my $inp = shift;
+        my $res = $inp->{result};
+        my @o = ();
+        if (exists $inp->{error}) {
+            push @o, sprintf("ERROR: (remove): %s", $inp->{error}->{message} );
+        }
+        if ($res) {
+            push @o, "remove OK.";
+        }
+        return @o;
+    },
+    'list_programs' => sub {
+        my $inp = shift;
+        my $res = $inp->{result};
+        my @o = ();
+        my $i = 1;
+        foreach my $p (@$res) {
+            push @o, sprintf( "%s", $p->{name});
+            delete $p->{name};
+            foreach my $k (sort keys %$p) {
+                push @o, sprintf( "      %-20s = %s", $k, $p->{$k});
+            }
+            $i++;
+        }
+        return @o;
+    },
+    'info_program' => sub {
+        my $inp = shift;
+        my $res = $inp->{result};
+        my @o = ();
+        my $p = $res;
+        if (exists $inp->{error}) {
+            push @o, sprintf("ERROR: (info): %s", $inp->{error}->{message} );
+        }
+        if (exists $p->{name}) {
+            push @o, sprintf( "%s", $p->{name});
+            delete $p->{name};
+            foreach my $k (sort keys %$p) {
+                push @o, sprintf( "      %-20s = %s", $k, $p->{$k});
+            }
         }
         return @o;
     },
@@ -215,6 +295,12 @@ sub console_input {
                 $heap->{cmd_sent}->{$id} = $cmd;
                 last SWITCH;
             };
+            ($input =~ /^status\s+(\w+)$/) and do {
+                my $id = next_id(); 
+                $cmd = { "method" => "info_status", "params" => [ $1 ], "id" => $id };
+                $heap->{cmd_sent}->{$id} = $cmd;
+                last SWITCH;
+            };
             ($input =~ /^start\s+(\w+)$/) and do {
                 my $id = next_id(); 
                 $cmd = { "method" => "start_program", "params" => [ $1 ], "id" => $id };
@@ -227,16 +313,53 @@ sub console_input {
                 $heap->{cmd_sent}->{$id} = $cmd;
                 last SWITCH;
             };
+            ($input =~ /^info-all$/) and do {
+                my $id = next_id(); 
+                $cmd = { "method" => "list_programs", "params" => [ ], "id" => $id };
+                $heap->{cmd_sent}->{$id} = $cmd;
+                last SWITCH;
+            };
+            ($input =~ /^add\s+(\{.*\})$/) and do {
+                my $id = next_id(); 
+                my $p = $1;
+                eval {
+                    $p = JSON::XS::decode_json( $p );
+                };
+                if ($@) {
+                    $heap->{cli_wheel}->put("ERROR: ".clean_eval_error($@));
+                    last SWITCH;
+                }
+                $cmd = { "method" => "add_program", "params" => [ $p ], "id" => $id };
+                $heap->{cmd_sent}->{$id} = $cmd;
+                last SWITCH;
+            };
+            ($input =~ /^remove\s+(\w+)$/) and do {
+                my $id = next_id(); 
+                $cmd = { "method" => "remove_program", "params" => [ $1 ], "id" => $id };
+                $heap->{cmd_sent}->{$id} = $cmd;
+                last SWITCH;
+            };
+            ($input =~ /^info\s+(\w+)$/) and do {
+                my $id = next_id(); 
+                $cmd = { "method" => "info_program", "params" => [ $1 ], "id" => $id };
+                $heap->{cmd_sent}->{$id} = $cmd;
+                last SWITCH;
+            };
+            ($input =~ /^commit$/) and do {
+                my $id = next_id(); 
+                $cmd = { "method" => "commit_programs", "params" => [ ], "id" => $id };
+                $heap->{cmd_sent}->{$id} = $cmd;
+                last SWITCH;
+            };
+            
             last SWITCH;
         }
+        $heap->{cli_wheel}->addhistory($input);
+        #$heap->{cli_wheel}->put("You Said: $input");
         if (defined $cmd) {
-            $heap->{cli_wheel}->addhistory($input);
-            #$heap->{cli_wheel}->put("You Said: $input");
             $heap->{io_wheel}->put($cmd);
         }
         else {
-            $heap->{cli_wheel}->addhistory($input);
-            #$heap->{cli_wheel}->put("You Said: $input");
             $heap->{cli_wheel}->put("ERROR: Invalid Command ($input)");
         }
     } elsif ( $exception eq 'cancel' ) {
@@ -257,4 +380,11 @@ sub console_input {
 my $idcount = 0;
 sub next_id {
     $idcount++;
+}
+
+
+sub clean_eval_error {
+    my $err = shift;
+    my ($e) = ($err =~ m/^(.*)\s+at\s+.*\s+line\s+\d+/);
+    return $e;
 }
