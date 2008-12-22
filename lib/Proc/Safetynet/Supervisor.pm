@@ -12,6 +12,7 @@ use POE::Session;
 use IO::Handle;
 use Scalar::Util qw/blessed reftype/;
 
+use File::Spec;
 use Proc::Safetynet::Event;
 use Proc::Safetynet::Program;
 use Proc::Safetynet::ProgramStatus;
@@ -25,6 +26,7 @@ sub initialize {
     $_[KERNEL]->state( 'list_programs'                  => $self );
     $_[KERNEL]->state( 'add_program'                    => $self );
     $_[KERNEL]->state( 'remove_program'                 => $self );
+    $_[KERNEL]->state( 'update_program'                 => $self );
     $_[KERNEL]->state( 'info_program'                   => $self );
     $_[KERNEL]->state( 'list_status'                    => $self );
     $_[KERNEL]->state( 'info_status'                    => $self );
@@ -74,6 +76,26 @@ sub initialize {
         }
         $ENV{PATH} = join(':', @p);
     }
+
+    # verify stderr_logpath
+    {
+        my $lpath = $self->options->{stderr_logpath} || File::Spec->tmpdir();
+        my ($logpath) = ($lpath =~ /^(.*)$/);
+        (-d $logpath)
+            or confess "stderr_logpath ($logpath) option does not exist";
+        $self->{stderr_logpath} = $logpath;
+    }
+
+    # verify stderr_logext
+    {
+        my $x = $self->options->{stderr_logext} || '.stderr';
+        # log ext should match the patter (.\w+)
+        my ($logext) = ($x =~ /^(\.\w+)$/);
+        ($logext)
+            or confess "stderr_logext ($logext) should match pattern ".'"\.\w+"';
+        $self->{stderr_logext} = $logext;
+    }
+
     # start monitoring
     $self->{monitored} = { };
     $self->{killed} = { };
@@ -194,7 +216,7 @@ sub do_postback {
     my $res = { result => $result };
     if (defined $error) { 
         my $cerr = $error;
-        if ($error =~ m/^(.*)\s+at\s.*line\s\d+[\s\n]*$/m) {
+        if ($error =~ m/^(.*)\s+at\s.*line\s\d+[\.\s\n]*$/m) {
             ($cerr) = $1;
         }
         $res->{error} = { message => $cerr };
@@ -260,6 +282,42 @@ sub info_program {
     $_[KERNEL]->yield( 'do_postback', @_[ARG0, ARG1], $o, $e );
 }
 
+sub update_program {
+    my $program_name    = $_[ARG2];
+    my $fieldval        = $_[ARG3];
+    my $o = 0;
+    my $e = undef;
+    my $allowed_updates = {
+        command             => 1,
+        autostart           => 1,
+        autorestart         => 1,
+        autorestart_wait    => 1,
+        priority            => 1,
+        eventlistener       => 1,
+    };
+    eval {
+        # check field values
+        (ref($fieldval) eq 'HASH')
+            or die "field expected as HASH";
+        my $p = $_[OBJECT]->{programs}->retrieve( $program_name );
+        (defined $p)
+            or die "object does not exist";
+        # check allowed field values
+        foreach my $k (keys %$fieldval) {
+            if (not exists $allowed_updates->{$k}) {
+                die "updating field '$k' not allowed";
+            }
+        }
+        # update
+        foreach my $k (keys %$fieldval) {
+            $p->{$k} = $fieldval->{$k};
+        }
+        $o = 1;
+    };
+    if ($@) { $e = $@; }
+    $_[KERNEL]->yield( 'do_postback', @_[ARG0, ARG1], $o, $e );
+}
+
 sub commit_programs {
     my $o = undef;
     my $e = undef;
@@ -295,6 +353,7 @@ sub info_status {
 
 sub start_program { 
     my $program_name = $_[ARG2];
+    my $self = $_[OBJECT];
     my $p = undef;
     my $o = 0;
     my $e = undef;
@@ -327,6 +386,22 @@ sub start_program {
                     $e = "unable to create pipe: $@";
                     last SPAWN; 
                 }
+            }
+            # redirect stderr
+            eval {
+                my ($pname)  = ($program_name =~ /^(.*)$/);
+                my $filename = File::Spec->catfile( 
+                    $self->{stderr_logpath},
+                    join('',$pname,$self->{stderr_logext}),
+                );
+                open STDERR, ">>$filename"
+                    or die "($filename): $!";
+            };
+            if ($@) {
+                warn "$$: unable to redirect stderr: $@";
+                $_[KERNEL]->yield( 'bcast_system_error', "unable to redirect stderr: $@", $p );
+                $e = "unable to redirect stderr: $@";
+                last SPAWN; 
             }
             # fork
             # ----
